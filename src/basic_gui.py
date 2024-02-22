@@ -91,7 +91,7 @@ class GraphGUI:
 
     def plot_graph(self):
         #clear canvas
-        self.canvas.delete("all")
+        #self.canvas.delete("all")
 
         # add the image as the background
         if hasattr(self, 'bg_photo'):
@@ -183,7 +183,7 @@ class GraphGUI:
         self.plot_nodes_in_bbox(self.selection_rectangle_bbox)
 
     def save_groups(self):
-        if hasattr(self, 'selected_nodes'):
+        if self.selected_nodes:  #Only evaluates true if the dictionary is not empty
             labels_df = pd.DataFrame({"node": list(self.selected_nodes.keys()), "label": list(self.selected_nodes.values())})
             save_filename = filedialog.asksaveasfilename(defaultextension=".csv", filetypes=(("CSV files", "*.csv"), ("All files", "*.*")))
             if save_filename:
@@ -223,6 +223,7 @@ class GraphGUI:
 
             # Save the starting coordinates of the selection
             self.selection_coords = (event.x, event.y)
+            self.selection_rectangle = self.canvas.create_rectangle(event.x, event.y, event.x, event.y, outline="black", tags="selection")
         
         if self.selection_labeling_mode:
             self.canvas.delete("selection_label")
@@ -230,12 +231,11 @@ class GraphGUI:
             # Save the starting coordinates of the selection
             self.selection_label_coords = (event.x, event.y)
 
+            self.selection_label_rectangle = self.canvas.create_rectangle(event.x, event.y, event.x, event.y, outline="black", tags="selection_label")
+
 
     def update_selection(self, event):
         if self.bbox_selection_mode and self.selection_coords:
-            # delete previous selection rectangle
-            if self.selection_rectangle:
-                self.canvas.delete(self.selection_rectangle)
 
             # get current canvas dimensions
             canvas_width = self.canvas.winfo_width()
@@ -252,11 +252,17 @@ class GraphGUI:
             x1 = max(0, min(x1, canvas_width))
             y1 = max(0, min(y1, canvas_height))
 
-            self.selection_rectangle = self.canvas.create_rectangle(x0, y0, x1, y1, outline="black", tags="selection")
+            if x1 < x0 and y1 < y0:
+                self.canvas.coords(self.selection_rectangle, x1, y1, x0, y0)
+            elif x1 < x0:
+                self.canvas.coords(self.selection_rectangle, x1, y0, x0, y1)
+            elif y1 < y0:
+                self.canvas.coords(self.selection_rectangle, x0, y1, x1, y0)
+            else:
+                self.canvas.coords(self.selection_rectangle, x0, y0, x1, y1)
+            
 
         if self.selection_labeling_mode:
-            if self.selection_label_rectangle:
-                self.canvas.delete(self.selection_label_rectangle)
 
             # get current canvas dimensions
             canvas_width = self.canvas.winfo_width()
@@ -266,7 +272,14 @@ class GraphGUI:
             x0, y0 = self.selection_label_coords
             x1, y1 = event.x, event.y
 
-            self.selection_label_rectangle = self.canvas.create_rectangle(x0, y0, x1, y1, outline="black", tags="selection_label")
+            if x1 < x0 and y1 < y0:
+                self.canvas.coords(self.selection_label_rectangle, x1, y1, x0, y0)
+            elif x1 < x0:
+                self.canvas.coords(self.selection_label_rectangle, x1, y0, x0, y1)
+            elif y1 < y0:
+                self.canvas.coords(self.selection_label_rectangle, x0, y1, x1, y0)
+            else:
+                self.canvas.coords(self.selection_label_rectangle, x0, y0, x1, y1)
 
 
     def end_selection(self, event):
@@ -287,6 +300,8 @@ class GraphGUI:
             self.selection_rectangle = self.canvas.create_rectangle(x0, y0, x1, y1, outline="black", tags="selection")
             self.selection_rectangle_bbox = bbox
 
+            self.toggle_bbox_selection()
+
         if self.selection_labeling_mode:
             # get coordinates of the selection rectangle
             x0, y0 = self.selection_label_coords
@@ -306,7 +321,7 @@ class GraphGUI:
 
     def plot_nodes_in_bbox(self, bbox):
         # clear the canvas
-        self.canvas.delete("all")
+        #self.canvas.delete("all")
 
         # add the image as the background
         if hasattr(self, 'bg_photo'):
