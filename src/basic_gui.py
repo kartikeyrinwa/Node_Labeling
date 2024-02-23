@@ -6,12 +6,20 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 from PIL import Image, ImageTk
+from skimage.morphology import flood, flood_fill
+from math import ceil
+import skimage as ski
 
 class GraphGUI:
     def __init__(self, root):
         self.root = root
         self.root.title("Graph GUI")
-
+        width = 800
+        height = 600
+        screen_width = self.root.winfo_screenwidth()
+        screen_height = self.root.winfo_screenheight()
+        align_str = f"{width}x{height}+{int((screen_width - width) / 2)}+{int((screen_height - height) / 2)}"
+        self.root.geometry(align_str)
 
         self.root.pack_propagate(False) # Prevent widgets from affecting the size of the window
 
@@ -29,6 +37,9 @@ class GraphGUI:
 
         self.select_button = tk.Button(root, text="Select Nodes", command=self.select_nodes)
         self.select_button.pack()
+
+        self.flood_fill_select_button = tk.Button(root, text="Select Nodes with Flood Fill", command=self.select_nodes_with_flood_fill)
+        self.flood_fill_select_button.pack()
 
         self.save_button = tk.Button(root, text="Save Groups", command=self.save_groups)
         self.save_button.pack()
@@ -60,6 +71,7 @@ class GraphGUI:
         self.selection_coords = None # Initialize selection_coords attribute
         self.bbox_selection_mode = False  # Initialize bbox_selection_mode attribute
         self.selection_labeling_mode = False  # Initialize selection_labeling_mode attribute
+        self.flood_fill_labeling_mode = False # Initialize flood_fill_labeling_mode attribute
         self.selection_label_rectangle = None # Initialize selection_label_rectangle attribute
 
         self.unlabeled = []
@@ -70,6 +82,8 @@ class GraphGUI:
         self.selected_nodes = {}
 
         self.graph_plot = None  # Initialize graph_plot attribute
+
+        self.disable_buttons(exceptions=[self.load_image_button])
 
 
     def load_data(self):
@@ -83,6 +97,8 @@ class GraphGUI:
         self.x = self.data['x']
         self.y = self.data['y']
         self.plot_graph()
+
+        self.disable_buttons(exceptions=[self.select_bbox_button])
 
     def update_unlabeled_count(self):
         # Update the label text with the current unlabeled count
@@ -131,6 +147,8 @@ class GraphGUI:
             self.bg_photo = ImageTk.PhotoImage(self.bg_image)
             self.canvas.create_image(0, 0, anchor=tk.NW, image=self.bg_photo)
 
+        self.disable_buttons(exceptions=[self.load_button])
+
     def zoom(self, event):
         scale = 1.1 if event.delta > 0 else 0.9
         self.zoom_scale *= scale
@@ -149,10 +167,16 @@ class GraphGUI:
 
 
     def select_nodes(self):
-        self.selection_labeling_mode = True
+        if self.selection_labeling_mode == True:
+            self.selection_labeling_mode = False
+            self.select_button.config(text="Select Nodes")
+        else:
+            self.selection_labeling_mode = True
+            self.select_button.config(text="Cancel Node Selection")
+
         
 
-    def label_dialog(self):
+    def label_dialog(self, selection_type):
         self.label_window = tk.Toplevel(self.root)
         self.label_window.title("Label Nodes")
 
@@ -164,10 +188,20 @@ class GraphGUI:
         # Focus the cursor on the entry field
         self.label_entry.focus_set()
 
-        # bing the return event ot the method
-        self.label_entry.bind("<Return>", lambda event: self.assign_label())
+        self.flood_fill_labeling_mode = False
+        self.selection_labeling_mode = False
 
-        tk.Button(self.label_window, text="Assign Label", command=self.assign_label).pack()
+        
+
+        if selection_type == "box_selection":
+            # bing the return event ot the method
+            self.label_entry.bind("<Return>", lambda event: self.assign_label())
+            tk.Button(self.label_window, text="Assign Label", command=self.assign_label).pack()
+        elif selection_type == "flood_selection":
+            self.label_entry.bind("<Return>", lambda event: self.assign_label_flooded())
+            tk.Button(self.label_window, text="Assign Label", command=self.assign_label_flooded).pack()
+
+        self.disable_buttons()
 
     #TODO warn when overwriting labels
     def assign_label(self):
@@ -175,12 +209,17 @@ class GraphGUI:
         nodes_in_bbox = self.nodes_in_bbox(self.current_node_selection_box)
         for node in nodes_in_bbox:
             self.selected_nodes[node] = label
-            self.unlabeled.remove(node)
+            if node in self.unlabeled:
+                self.unlabeled.remove(node)
         self.unlabeled_count = len(self.unlabeled)
         self.label_entry.delete(0, tk.END)
         self.label_window.destroy()
         self.update_unlabeled_count()
         self.plot_nodes_in_bbox(self.selection_rectangle_bbox)
+
+        self.selection_labeling_mode = True
+
+        self.enable_buttons(exceptions=[self.load_button, self.load_image_button])
 
     def save_groups(self):
         if self.selected_nodes:  #Only evaluates true if the dictionary is not empty
@@ -233,6 +272,9 @@ class GraphGUI:
 
             self.selection_label_rectangle = self.canvas.create_rectangle(event.x, event.y, event.x, event.y, outline="black", tags="selection_label")
 
+        if self.flood_fill_labeling_mode:
+            self.selection_label_coords = (event.x, event.y)
+            self.label_dialog("flood_selection")
 
     def update_selection(self, event):
         if self.bbox_selection_mode and self.selection_coords:
@@ -302,6 +344,8 @@ class GraphGUI:
 
             self.toggle_bbox_selection()
 
+            self.enable_buttons(exceptions=[self.load_button, self.load_image_button])
+
         if self.selection_labeling_mode:
             # get coordinates of the selection rectangle
             x0, y0 = self.selection_label_coords
@@ -312,7 +356,7 @@ class GraphGUI:
 
             self.current_node_selection_box = bbox
             # open a dialog to label the selected nodes
-            self.label_dialog()
+            self.label_dialog("box_selection")
 
             # reset selection
             self.selection_label_coords = None
@@ -354,6 +398,97 @@ class GraphGUI:
             self.unlabeled_count = len(self.unlabeled)
             self.update_unlabeled_count()
             self.plot_nodes_in_bbox(self.selection_rectangle_bbox)  # Update the graph to reflect the loaded labels
+
+    #TODO warn when overwriting labels
+    def assign_label_flooded(self):
+        label = self.label_entry.get()
+        bbox = self.selection_rectangle_bbox
+        x = self.selection_label_coords[0] 
+        y = self.selection_label_coords[1]
+
+        #map the coordinates to the image
+        #x = bbox[0] + (bbox[2] - bbox[0]) * ((x - 0)/ (self.bg_image.width - 0))
+        #y = bbox[1] + (bbox[3] - bbox[1]) * ((self.bg_image.height - y)/ (self.bg_image.height - 0))
+
+        x = ceil(x)
+        y = ceil(y)
+
+
+
+
+        new_image = ski.color.rgb2gray(ski.util.img_as_ubyte(self.bg_image)[:,:,:3])
+
+        flooded_nodes = self.find_flooded_nodes((y,x), new_image)
+        for node in flooded_nodes:
+            self.selected_nodes[node] = label
+            self.unlabeled.remove(node)
+        self.unlabeled_count = len(self.unlabeled)
+        self.label_entry.delete(0, tk.END)
+        self.label_window.destroy()
+        self.update_unlabeled_count()
+        self.plot_nodes_in_bbox(self.selection_rectangle_bbox)
+
+        self.flood_fill_labeling_mode = True
+
+        self.enable_buttons(exceptions=[self.load_button, self.load_image_button])
+
+
+    def find_flooded_nodes(self, seed, image):
+        # Flood the image from the seed point
+
+  
+        mask = flood(image, seed)
+
+        bbox = self.selection_rectangle_bbox
+
+        x = bbox[0] + (bbox[2] - bbox[0]) * ((self.x - min(self.x))/ (max(self.x) - min(self.x)))
+        y = bbox[1] + (bbox[3] - bbox[1]) * ((max(self.y) - self.y)/ (max(self.y) - min(self.y)))
+        
+        # Get the list of nodes that are in the flooded region
+
+        flooded_nodes = [self.nodes[i] for i in range(len(self.nodes)) if mask[int(y[i]), int(x[i])]]
+
+        return flooded_nodes
+    
+    def select_nodes_with_flood_fill(self):
+        if self.flood_fill_labeling_mode == True:
+            self.flood_fill_labeling_mode = False
+            self.flood_fill_select_button.config(text="Select Nodes with Flood Fill")
+        else:
+            self.flood_fill_labeling_mode = True
+            self.flood_fill_select_button.config(text="Cancel Node Selection")
+
+    def disable_buttons(self, to_disable = [], exceptions = []):
+        self.load_button.config(state="disabled")
+        self.load_image_button.config(state="disabled")
+        self.load_labels_button.config(state="disabled")
+        self.select_button.config(state="disabled")
+        self.flood_fill_select_button.config(state="disabled")
+        self.save_button.config(state="disabled")
+        self.select_bbox_button.config(state="disabled")
+
+        for button in to_disable:
+            button.config(state="disabled")
+
+        for exception in exceptions:
+            exception.config(state="normal")
+        
+
+    def enable_buttons(self, to_enable = [], exceptions = []):
+        self.load_button.config(state="normal")
+        self.load_image_button.config(state="normal")
+        self.load_labels_button.config(state="normal")
+        self.select_button.config(state="normal")
+        self.flood_fill_select_button.config(state="normal")
+        self.save_button.config(state="normal")
+        self.select_bbox_button.config(state="normal")
+
+        for button in to_enable:
+            button.config(state="normal")
+
+        for exception in exceptions:
+            exception.config(state="disabled")
+
             
 
 if __name__ == "__main__":
